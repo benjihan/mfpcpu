@@ -1,4 +1,3 @@
-;;; 2017-05-03
 ;;; @file    mfpcpu.s
 ;;; @author  Ben/OVR
 ;;; @date    2017-05-03
@@ -31,7 +30,6 @@
 ;;; OTHER DEALINGS IN THE SOFTWARE.
 ;;; 
 ;;; For more information, please refer to <http://unlicense.org/>
-
 
 xxxreg 		equr	d4
 tmpreg 		equr	d5
