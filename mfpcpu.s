@@ -1,8 +1,8 @@
 ;;; @file    mfpcpu.s
 ;;; @author  Ben/OVR
-;;; @date    2017-05-03
+;;; @date    2017-05-04
 ;;; @brief   CPU/MFP clock ratio
-;;; @version 4
+;;; @version 5
 ;;;
 ;;; -----------------------------------------------------------------------
 ;;; 
@@ -31,8 +31,7 @@
 ;;; 
 ;;; For more information, please refer to <http://unlicense.org/>
 
-
-tdrreg		equr	a5
+adrreg		equr	a5
 synreg		equr	a6
 xxxreg 		equr	d4
 tmpreg 		equr	d5
@@ -41,12 +40,20 @@ mfpreg 		equr	d7
 
 ;;; ------------------------------
 
+NN set 2	; nops
 TD set 0	; TDR 
 TC set 7	; TCR
 
 ;;; ------------------------------
 
 	opt	o+,a+,w-
+
+
+;;; *******************************************************
+
+	SECTION	TEXT
+
+;;; *******************************************************
 
 	bra.s	start
 	dc.b	"*** "
@@ -62,7 +69,18 @@ start:
 	trap	#14
 	addq	#2,a7
 	move.l	d0,phybase
+	
+	;; Write help string on both plans	
 	bsr	cls
+	clr.w	cursor
+	pea	pszhlp
+	bsr	psz_puts
+	addq.l	#2,phybase
+	clr.w	cursor
+	pea	pszhlp
+	bsr	psz_puts
+	subq.l	#2,phybase
+	move.w	#$0001,cursor
 	
 	clr.l	-(a7)
 	move	#32,-(a7)
@@ -118,17 +136,21 @@ loop:
 	bsr	update
 
 .noupdate:
-	tst.b	synced		; This critical section
-	beq.s	.notsync	; is not completly safe.
+	
 	bsr	update_sync
 .notsync:
 	bsr	get_key
-	cmp.b	#$39,d0		; <SPACE>
+	cmp.b	#$44,d0		; <F10>
 	beq	exit
 	cmp.b	#$1C,d0		; <RETURN>
+	beq	exit_nosave
+	cmp.b	#$39,d0		; <SPACE>
 	bne	loop
 	not.b	paused
 	bra	loop
+	
+exit_nosave:
+	clr.l	nbrec		; Will prevent saving below
 	
 exit:
 	move	#$2700,sr
@@ -151,7 +173,45 @@ exit:
 	move	#32,-(a7)
 	trap	#1
 	addq	#6,a7
+	
+	;;
+	move.l	nbrec(pc),d0
+	beq	.nosave
 
+	clr.w	fhdl
+	clr.w	-(a7)		; mode.w
+	pea	oname(pc)	; fname.l
+	move.w	#$3C,-(a7)	; Fcreate(fname.l,mode.w)
+	trap	#1
+	addq.w	#8,a7
+	tst.w	d0
+	ble.s	.nosave
+	move.w	d0,fhdl
+
+	;; Fwrite
+	move.l	nbrec(pc),d0
+	lsl.l	#3,d0
+	move.l	#endrec-record,d1
+	cmp.l	d1,d0
+	bls.s	.ok
+	move.l	d1,d0
+.ok:	
+
+	pea	record(pc)	; adr.l
+	move.l	d0,-(a7)	; cnt.l
+	move.w	fhdl(pc),-(a7)	; hdl.w
+	move.w	#$40,-(a7)	; Fwrite(hdl.w,cnt.l,adr.l)
+	trap	#1
+	lea	12(a7),a7
+	
+	;; Fclose
+	move.w	fhdl(pc),-(a7)	; hdl.w
+	move.w	#$3E,-(a7)	; Fclose(hdl.w)
+	trap	#1
+	addq.w	#4,a7
+	clr.w	fhdl
+
+.nosave:
 	;; Exit
 	clr.w	-(a7)
 	trap	#1
@@ -184,14 +244,24 @@ update:
 ;;; Update scynced values
 ;;;
 
-update_sync:	
-	move.l	mfpsyn,d3	; Just get the value as fast 
-	move.l	vblsyn,d2	; as possible
-	move.l	divsyn,d0	; as possible
-	sf	synced
-
-	lea	divtxt,a0
-	bsr	atox
+update_sync:
+	lea	_recR(pc),a0
+	move.l	(a0)+,a1	; a1=_recR
+	move.l	(a0),a2		; a2=_recW
+	cmpa.l	a1,a2
+	beq.s	.norec		; no new record
+	
+	move.l	(a1)+,d3	; d3=MFPs
+	move.l	(a1)+,d2	; d2=VBLs
+	cmpa.l	#endrec,a1
+	blo.s	.ok
+	lea	record(pc),a1
+.ok:	
+	move.l	a1,-(a0)	; store _recR
+	
+;	moveq	#0,d0	
+;	lea	divtxt,a0
+;	bsr	atox
 
 	move.l	d3,d0
 	lea	mfptxt,a0
@@ -207,8 +277,16 @@ update_sync:
 	bsr	psz_puts
 	subq.l	#2,phybase
 	clr.b	cursorx		; <CR>
-	addq.b	#1,cursory	; <LF>
+	
+	move.b	cursory,d0
+	addq.b	#1,d0		; <LF>
+	cmp.b	#25,d0
+	blo.s	.oky
+	moveq	#1,d0		; Skip help line
+.oky:	
+	move.b	d0,cursory
 
+.norec:
 	rts
 
 ;;; *******************************************************
@@ -377,8 +455,10 @@ atox:
 
 
 ;;; *******************************************************
-;;; VBL irq
+;;; VBL irqs
 ;;;
+
+;:; Sync on video
 sync:
 	eor.w	#$333,$ffff8240.w
 	pea	(synreg)
@@ -393,36 +473,49 @@ sync:
 	eor.w	#$333,$ffff8240.w
 	rts
 	
-
+;;; 1st VBL init counters and records before starting the timer
+;;;
 vblirq:
-	move.l	#vblirq2,$70.w	; setup next VBL
-	moveq	#0,mfpreg	; reset MFP counter (d7)
+	move.l	#vblirq2,$70.w	; setup next VBL routine
+
 	moveq	#0,vblreg	; reset VBL counter (d6)
+	moveq	#0,mfpreg	; reset MFP counter (d7)
+
+	
+	;; Init records
+	move.l	#record,_recW
+	move.l	#record,_recR
+	clr.l	nbrec
+	
+	;; sync before starting the timer 
 	bsr.s	sync
-	move.b	#TC,$fffffa19.w	; (4) start timer-A
+	move.b	#TC,$fffffa19.w	; (4) start timer-A ?
 	rte
 
 vblirq2:
+	addq.l	#1,vblreg
+	move.l	_recW(pc),adrreg
+
+	;; sync (more or less) with the timer start 
 	bsr.s	sync
-	nop			; (1)
-	nop			; (1)
-	nop			; (1)
+	dcb.w	NN,$4e71	; NN nops
+	
 	move.w	mfpreg,tmpreg	; (1) store temporary MFP counter
 	cmp.w	mfpreg,tmpreg	; (1)
-	beq.s	.ignore		; (2/3) 
-	move.l	mfpreg,tmpreg	; (1) fast save the MFP counter
-	addq.l	#1,vblreg	; (2)
-	tas.b	synced		; critical section
-	bne.s	.lost		; previous value not retrieved
-	move.l	tmpreg,mfpsyn
-	move.l	vblreg,vblsyn
-	clr.l	divsyn
+	beq.s	.ignore		; (2/3)
+
+	;; Timer interruption happened between move and cmp.
+	;; We are in sync, write a record
+	move.l	mfpreg,(adrreg)+
+	move.l	vblreg,(adrreg)+
+	addq.l	#1,nbrec
 	
+	cmpa.l	#endrec,adrreg
+	blo.s	.ok
+	lea	record(pc),adrreg
+.ok:
+	move.l	adrreg,_recW
 .ignore:
-	addq.l	#1,vblreg
-	rte
-.lost:
-	addq.l	#1,synlost
 	rte
 
 ;;; *******************************************************
@@ -433,39 +526,49 @@ timerA:				; (11) exception overhead
 	rte			; (5)
 
 ;;; *******************************************************
-;;; *******************************************************
 
 	SECTION	DATA
 
 ;;; *******************************************************
-;;; *******************************************************
 
 font:	include "8x8.s"
 
+pszhlp: dc.b "0"+NN," nop(s) | "
+	dc.b "<SPC> pause | <F10> Save&Exit | <RET> Exit",0
 psztxt:	dc.b "mfp:$"
 mfptxt:	dc.b "00000000 vbl:$"
 vbltxt:	dc.b "00000000 /$"
 divtxt:	dc.b "00000000",0
 
+oname:	dc.b "mfpvbl",'0'+NN,".rec",0
+
+;;; *******************************************************
+
+	SECTION	BSS
+
+;;; *******************************************************
+
 	even
 cursor:
-cursorx:	dc.b	0
-cursory:	dc.b	0
+cursorx:	ds.b	1
+cursory:	ds.b	1
 
 	even
-vblsyn:		dc.l 0
-mfpsyn:		dc.l 0
-divsyn:		dc.l 0
-synlost:	dc.l 0
-synced:		dc.w 0
+_recR:		ds.l 1	; do not change order
+_recW:		ds.l 1	;
+nbrec:		ds.l 1	;
 
 	even
-phybase:	dc.l	0
-save070:	dc.l	0
-save134:	dc.l	0
-mfpcount:	dc.l	0
-paused:		dc.b	0
-savea07:	dc.b	0
-savea09:	dc.b	0
-savea17:	dc.b	0
-curkey:		dc.b	0
+phybase:	ds.l	1
+save070:	ds.l	1
+save134:	ds.l	1
+fhdl:		ds.w	1
+paused:		ds.b	1
+savea07:	ds.b	1
+savea09:	ds.b	1
+savea17:	ds.b	1
+curkey:		ds.b	1
+	
+	even
+record:		ds.b	1<<17	; 128Kb should be more than enough
+endrec:
