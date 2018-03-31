@@ -2,7 +2,7 @@
 ;;; @author  Ben/OVR
 ;;; @date    2017-05-04
 ;;; @brief   CPU/MFP clock ratio
-;;; @version 5
+;;; @version 6
 ;;;
 ;;; -----------------------------------------------------------------------
 ;;; 
@@ -38,13 +38,18 @@ tmpreg 		equr	d5
 vblreg 		equr	d6
 mfpreg 		equr	d7
 
+
 ;;; ------------------------------
 
-NN set 2	; nops
+NN set 3	; nops (3 seems like it)
 TD set 0	; TDR 
 TC set 7	; TCR
 
 ;;; ------------------------------
+
+IRQA set 10	; First interrupt vector to save
+IRQZ set 256	; Save up to this vector (exclusive)
+NIRQ set IRQZ-IRQA
 
 	opt	o+,a+,w-
 
@@ -86,15 +91,27 @@ start:
 	move	#32,-(a7)
 	trap	#1
 	addq	#6,a7
-	move.l	d0,-(a7)
+	move.l	d0,saveusp
+	move.l	a7,savessp
 	
 	bsr	clear_acias
 	
 	move	sr,-(a7)
 	move.w	#$2700,sr
 	
-	;; Save VBL and install
-	move.l	$70.w,save070
+	;; Save exception vectors
+	lea	IRQA*4.w,a0
+	lea	vectors(pc),a1
+	lea	irqs(pc),a2
+	moveq	#NIRQ-1,d0
+save_vectors:
+	move.l	(a0),(a1)+
+	move.l	a2,(a0)+
+	lea	(irqe-irqs)/NIRQ(a2),a2
+	dbf	d0,save_vectors
+	clr.w	numvec
+	
+	;; Install VBL
 	move.l	#vblirq,$70.w
 	
 	;; Save MFP
@@ -111,8 +128,7 @@ start:
 	move.b	#TD,$fffffa1f.w	; count down
 	bset	#5,$fffffa07.w	; IER
 	bset	#5,$fffffa13.w	; IMR
-	move.l	$134.w,save134	;
-	move.l	#timerA,$134.w	;
+	move.l	#timerA,$134.w	; Install timer-A vector
 	
 	move	(a7)+,sr
 	
@@ -157,11 +173,18 @@ exit:
 	clr.b	$fffffa19.w	; stop timer-A
 	bclr	#5,$fffffa07.w	; IER
 	bclr	#5,$fffffa13.w	; IMR
-	move.l	save070,$70.w	; VBL vector
-	move.l	save134,$134.w	
 	move.b	savea17,$fffffa17.w
 	move.b	savea09,$fffffa09.w
 	move.b	savea07,$fffffa07.w
+	
+	;; Restore exception vectors
+	lea	IRQA*4.w,a0
+	lea	vectors(pc),a1
+	moveq	#NIRQ-1,d0
+rest_vectors:
+	move.l	(a1)+,(a0)+
+	dbf	d0,rest_vectors
+	
 	stop	#$2300
 	
 	bsr	clear_acias
@@ -170,6 +193,8 @@ exit:
 	bsr	put_ikbd
 
 	;; Back to usermode
+	move.l	savessp(pc),a7
+	move.l	saveusp(pc),d0
 	move	#32,-(a7)
 	trap	#1
 	addq	#6,a7
@@ -212,6 +237,28 @@ exit:
 	clr.w	fhdl
 
 .nosave:
+	moveq	#0,d0
+	move.w	numvec(pc),d0
+	beq	sysexit
+
+	lsl	#2,d0
+	lea	pszvec(pc),a0
+	bsr	atox
+	
+	pea	pszirq(pc)
+	move.w	#9,-(a7)
+	trap	#1
+	addq	#6,a7
+	
+waitesc:
+	move	#$7,-(a7)
+	trap	#1
+	addq	#2,a7
+	cmp.b	#27,d0
+	bne	waitesc
+
+
+sysexit:
 	;; Exit
 	clr.w	-(a7)
 	trap	#1
@@ -480,7 +527,6 @@ vblirq:
 
 	moveq	#0,vblreg	; reset VBL counter (d6)
 	moveq	#0,mfpreg	; reset MFP counter (d7)
-
 	
 	;; Init records
 	move.l	#record,_recW
@@ -490,6 +536,9 @@ vblirq:
 	;; sync before starting the timer 
 	bsr.s	sync
 	move.b	#TC,$fffffa19.w	; (4) start timer-A ?
+	rte
+
+myvector:
 	rte
 
 vblirq2:
@@ -526,6 +575,23 @@ timerA:				; (11) exception overhead
 	rte			; (5)
 
 ;;; *******************************************************
+;;;  
+;;;
+declirq	macro
+	move.w	#\1,numvec
+	move.l	#exit_nosave,2(a7)
+	rte
+	endm
+
+irqs:
+I	set	IRQA
+	rept	NIRQ
+	declirq	I
+I	set	I+1
+	endr
+irqe:
+
+;;; *******************************************************
 
 	SECTION	DATA
 
@@ -533,6 +599,10 @@ timerA:				; (11) exception overhead
 
 font:	include "8x8.s"
 
+pszirq:	dc.b 27,'E'
+	dc.b "Unexpected interruption @$"
+pszvec:	dc.b "00000000",10,13
+	dc.b "Press <ESC> to exit",0
 pszhlp: dc.b "0"+NN," nop(s) | "
 	dc.b "<SPC> pause | <F10> Save&Exit | <RET> Exit",0
 psztxt:	dc.b "mfp:$"
@@ -560,14 +630,18 @@ nbrec:		ds.l 1	;
 
 	even
 phybase:	ds.l	1
-save070:	ds.l	1
-save134:	ds.l	1
 fhdl:		ds.w	1
+numvec:		ds.w	1
 paused:		ds.b	1
 savea07:	ds.b	1
 savea09:	ds.b	1
 savea17:	ds.b	1
 curkey:		ds.b	1
+
+	even
+savessp:	ds.l	1
+saveusp:	ds.l	1
+vectors:	ds.l	NIRQ
 	
 	even
 record:		ds.b	1<<17	; 128Kb should be more than enough
