@@ -2,7 +2,7 @@
 ;;; @author  Ben/OVR
 ;;; @date    2017-05-03
 ;;; @brief   CPU/MFP clock ratio
-;;; @version 3
+;;; @version 4
 ;;;
 ;;; -----------------------------------------------------------------------
 ;;; 
@@ -31,16 +31,32 @@
 ;;; 
 ;;; For more information, please refer to <http://unlicense.org/>
 
+
+tdrreg		equr	a5
+synreg		equr	a6
 xxxreg 		equr	d4
 tmpreg 		equr	d5
 vblreg 		equr	d6
 mfpreg 		equr	d7
 
+;;; ------------------------------
+
 TD set 0	; TDR 
 TC set 7	; TCR
-	
+
+;;; ------------------------------
+
 	opt	o+,a+,w-
 
+	bra.s	start
+	dc.b	"*** "
+	dc.b	"A simple program to compute "
+	dc.b    "MFP-timers/CPU clock ratio "
+	dc.b	"by using VBL synchro."
+	dc.b	"*** By Ben/OVR in 2017 ***"
+	dc.b	0
+
+	even
 start:
 	move.w	#2,-(a7)
 	trap	#14
@@ -53,6 +69,8 @@ start:
 	trap	#1
 	addq	#6,a7
 	move.l	d0,-(a7)
+	
+	bsr	clear_acias
 	
 	move	sr,-(a7)
 	move.w	#$2700,sr
@@ -80,6 +98,12 @@ start:
 	
 	move	(a7)+,sr
 	
+ 	move.b	#$12,d0		; Disable mouse
+	bsr	put_ikbd
+
+ 	move.b	#$15,d0		; Disable joystick
+	bsr	put_ikbd
+	
 	moveq	#0,vblreg	; clear VBL 
 	moveq	#0,mfpreg	; clear MFP 
 	
@@ -96,6 +120,71 @@ loop:
 .noupdate:
 	tst.b	synced		; This critical section
 	beq.s	.notsync	; is not completly safe.
+	bsr	update_sync
+.notsync:
+	bsr	get_key
+	cmp.b	#$39,d0		; <SPACE>
+	beq	exit
+	cmp.b	#$1C,d0		; <RETURN>
+	bne	loop
+	not.b	paused
+	bra	loop
+	
+exit:
+	move	#$2700,sr
+	clr.b	$fffffa19.w	; stop timer-A
+	bclr	#5,$fffffa07.w	; IER
+	bclr	#5,$fffffa13.w	; IMR
+	move.l	save070,$70.w	; VBL vector
+	move.l	save134,$134.w	
+	move.b	savea17,$fffffa17.w
+	move.b	savea09,$fffffa09.w
+	move.b	savea07,$fffffa07.w
+	stop	#$2300
+	
+	bsr	clear_acias
+	
+ 	move.b	#$8,d0		; Enable mouse
+	bsr	put_ikbd
+
+	;; Back to usermode
+	move	#32,-(a7)
+	trap	#1
+	addq	#6,a7
+
+	;; Exit
+	clr.w	-(a7)
+	trap	#1
+	illegal
+
+;;; *******************************************************
+;;; Update counters
+;;;
+update:
+
+	;; Use TDR as LSB for the MFP counter
+	move.l	mfpreg,d0
+	lsl.l	#8,d0
+	move.b	$fffffa1f.w,d0
+	neg.b	d0
+	lea	mfptxt,a0
+	bsr	atox
+
+	move.l	vblreg,d0
+	lea	vbltxt,a0
+	bsr	atox
+	
+	clr.b	cursorx		; <CR>
+	pea	psztxt
+	bsr	psz_puts
+	
+	rts
+
+;;; *******************************************************
+;;; Update scynced values
+;;;
+
+update_sync:	
 	move.l	mfpsyn,d3	; Just get the value as fast 
 	move.l	vblsyn,d2	; as possible
 	move.l	divsyn,d0	; as possible
@@ -117,58 +206,59 @@ loop:
 	pea	psztxt
 	bsr	psz_puts
 	subq.l	#2,phybase
-	clr.b	cursorx
-	addq.b	#1,cursory
+	clr.b	cursorx		; <CR>
+	addq.b	#1,cursory	; <LF>
 
-.notsync:
-	bsr	get_key
-	cmp.b	#$39,d0
-	beq	exit
-	cmp.b	#$00,d0
-	seq	d0
-	eor.b	d0,paused
-	bra	loop
-	
-exit:
-	move	sr,-(a7)
-	;; ----------------	
-	move	#$2700,sr
-	clr.b	$fffffa19.w	; stop timer-A
-	bclr	#5,$fffffa07.w	; IER
-	bclr	#5,$fffffa13.w	; IMR
-	move.l	save070,$70.w	; VBL vector
-	move.l	save134,$134.w	
-	move.b	savea17,$fffffa17.w
-	move.b	savea09,$fffffa09
-	move.b	savea07,$fffffa07
-	;; ----------------	
-	move	sr,-(a7)
-
-	;; Back to usermode
-	move	#32,-(a7)
-	trap	#1
-	addq	#6,a7
-	;; Exit
-	clr.w	-(a7)
-	trap	#1
-	illegal
+	rts
 
 ;;; *******************************************************
-;;; Read stdin if a char is available
+;;; Write a command to ikbd
+;;;
+;;;  Inp: d0.b command to write
+;;;
+put_ikbd:
+	btst	#1,$fffffc00.w
+	beq.s	put_ikbd
+	move.b	d0,$fffffc02.w
+	rts
+
+;;; *******************************************************
+;;; Reset keyboard
+;;;
+clear_acias:
+	moveq	#$13,d0		; disable transfert
+	bsr	put_ikbd
+	
+.flushing:
+	moveq	#$a1,d0		; 1010 0001
+	and.b	$fffffc00.w,d0
+	beq.s	.flushed
+	move.b	$fffffc02.w,d0
+	bra.s	.flushing
+.flushed:
+	moveq	#$11,d0		; enable transfert
+	bsr	put_ikbd
+	rts
+
+;;; *******************************************************
+;;; Get released key scan
 ;;;
 ;;;  Out: d0=char (0:none)
 ;;;
 get_key:
 	moveq	#0,d0
-;	btst	#0,$fffffc00.w
-;	beq.s	.nokey
-	move.b	$fffffc02.w,d0
-	bmi.s	.nokey
-.keypress:
-	cmp.b	curkey,d0
+	btst	#1,$fffffc00.w
 	beq.s	.nokey
-	move.b	d0,curkey
+	move.b	$fffffc02.w,d0
+	bclr	#7,d0
+	beq.s	.keypress
+.keyrelease:
+	cmp.b	curkey,d0
+	bne.s	.nokey
+	clr.b	curkey
 	rts
+.keypress:
+	move.b	d0,curkey
 .nokey:
 	moveq	#0,d0
 	rts
@@ -181,13 +271,12 @@ cls:
 	move.l	phybase,a0
 	moveq	#0,d0
 	move.w	d0,cursor
-	move.w	#32000/32-1,d1
+	move.w	#32000/4/8-1,d1
 .cls:	
 	REPT	8
 	move.l	d0,(a0)+
 	ENDR
 	dbf	d1,.cls
-	
 	movem.l	(a7)+,d0-d1/a0
 	rts
 
@@ -227,7 +316,7 @@ putc:
 	cmp.b	#80,d0
 	blo.s	.okx
 	moveq	#0,d0
-	addq	#1,d1
+	addq.b	#1,d1
 .okx:	
 	cmp.b	#25,d1
 	blo.s	.oky
@@ -236,7 +325,7 @@ putc:
 	move.b	d0,cursorx
 	move.b	d1,cursory	
 
-	;; cursor screen address	
+	;; cursor -> screen address	
 	moveq	#0,d0
 	move.b	cursorx,d0
 	moveq	#1,d1
@@ -288,43 +377,19 @@ atox:
 
 
 ;;; *******************************************************
-;;; Refresh screen
-;;;
-refresh:
-	rts
-
-;;; *******************************************************
-;;; Update screen
-;;;
-update:
-	move.l	mfpreg,d0
-	lea	mfptxt,a0
-	bsr	atox
-
-	move.l	vblreg,d0
-	lea	vbltxt,a0
-	bsr	atox
-	
-	clr.b	cursorx
-	pea	psztxt
-	bsr	psz_puts
-	
-	rts
-
-;;; *******************************************************
 ;;; VBL irq
 ;;;
 sync:
 	eor.w	#$333,$ffff8240.w
-	pea	(a6)
+	pea	(synreg)
 
-	lea	$ffff8209.w,a6
-.sync:	move.b	(a6),tmpreg
+	lea	$ffff8209.w,synreg
+.sync:	move.b	(synreg),tmpreg
 	beq.s	.sync
 	not.b	tmpreg
 	lsr.w	tmpreg,tmpreg
 	
-	move.l	(a7)+,a6
+	move.l	(a7)+,synreg
 	eor.w	#$333,$ffff8240.w
 	rts
 	
@@ -334,17 +399,19 @@ vblirq:
 	moveq	#0,mfpreg	; reset MFP counter (d7)
 	moveq	#0,vblreg	; reset VBL counter (d6)
 	bsr.s	sync
-	lea	$fffffa1f.w,a5
-	move.b	#TC,$fffffa19.w	; start timer-A
+	move.b	#TC,$fffffa19.w	; (4) start timer-A
 	rte
 
 vblirq2:
 	bsr.s	sync
-	move.l	mfpreg,tmpreg	; store temporary MFP counter
-	addq.w	#1,vblreg	; increments VBL counter
-	cmp.l	mfpreg,tmpreg
-	beq.s	.ignore
-	move.l	mfpreg,tmpreg	; fast save the MFP counter
+	nop			; (1)
+	nop			; (1)
+	nop			; (1)
+	move.w	mfpreg,tmpreg	; (1) store temporary MFP counter
+	cmp.w	mfpreg,tmpreg	; (1)
+	beq.s	.ignore		; (2/3) 
+	move.l	mfpreg,tmpreg	; (1) fast save the MFP counter
+	addq.l	#1,vblreg	; (2)
 	tas.b	synced		; critical section
 	bne.s	.lost		; previous value not retrieved
 	move.l	tmpreg,mfpsyn
@@ -352,17 +419,18 @@ vblirq2:
 	clr.l	divsyn
 	
 .ignore:
+	addq.l	#1,vblreg
 	rte
 .lost:
 	addq.l	#1,synlost
 	rte
 
 ;;; *******************************************************
-;;; Timer-A irq
+;;; Timer-A irq (~18 nops) 
 ;;;
-timerA:
-	addq.l	#1,mfpreg	; increments MFP counter
-	rte
+timerA:				; (11) exception overhead
+	addq.l	#1,mfpreg	; (2) increments MFP counter
+	rte			; (5)
 
 ;;; *******************************************************
 ;;; *******************************************************

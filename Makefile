@@ -3,7 +3,7 @@
 # by Ben/OVR
 #
 
-override VERSION := 3
+override VERSION := 4
 
 VASM = vasmm68k_mot -quiet -devpac -Ftos
 VASM_FLAGS = -showcrit
