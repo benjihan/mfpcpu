@@ -5,8 +5,8 @@
 
 ## License and copyright
 
-  * Copyleft 2017-2018 Benjamin Gerard AKA Ben/OVR
-  * License by [Unlicense](http://unlicense.org)
+  * Copyleft 2016-2018 Benjamin Gerard AKA Ben/OVR
+  * Licensed by [Unlicense](http://unlicense.org)
 
 
 ## Bugs
