@@ -1,8 +1,9 @@
+;;; 2017-05-03
 ;;; @file    mfpcpu.s
 ;;; @author  Ben/OVR
 ;;; @date    2017-05-03
 ;;; @brief   CPU/MFP clock ratio
-;;; @version 2
+;;; @version 3
 ;;;
 ;;; -----------------------------------------------------------------------
 ;;; 
@@ -31,13 +32,14 @@
 ;;; 
 ;;; For more information, please refer to <http://unlicense.org/>
 
-mfptmp 		equr	d5
+
+xxxreg 		equr	d4
+tmpreg 		equr	d5
 vblreg 		equr	d6
 mfpreg 		equr	d7
 
-TF set 8
-TD set (1<<TF)&255	; TDR 
-TC set 7		; TCR
+TD set 0	; TDR 
+TC set 7	; TCR
 	
 	opt	o+,a+,w-
 
@@ -97,7 +99,7 @@ loop:
 	tst.b	synced		; This critical section
 	beq.s	.notsync	; is not completly safe.
 	move.l	mfpsyn,d3	; Just get the value as fast 
-	move.l	vblsyn,d4	; as possible
+	move.l	vblsyn,d2	; as possible
 	move.l	divsyn,d0	; as possible
 	sf	synced
 
@@ -108,7 +110,7 @@ loop:
 	lea	mfptxt,a0
 	bsr	atox
 
-	move.l	d4,d0
+	move.l	d2,d0
 	lea	vbltxt,a0
 	bsr	atox
 	
@@ -314,30 +316,47 @@ update:
 ;;; *******************************************************
 ;;; VBL irq
 ;;;
+sync:
+	eor.w	#$333,$ffff8240.w
+	pea	(a6)
+
+	lea	$ffff8209.w,a6
+.sync:	move.b	(a6),tmpreg
+	beq.s	.sync
+	not.b	tmpreg
+	lsr.w	tmpreg,tmpreg
+	
+	move.l	(a7)+,a6
+	eor.w	#$333,$ffff8240.w
+	rts
+	
+
 vblirq:
-	moveq	#0,mfpreg	; reset MFP counter (d7)
-	move.b	#TC,$fffffa19.w	; start timer-A
-	moveq	#-1,vblreg	; reset VBL counter (d6)
 	move.l	#vblirq2,$70.w	; setup next VBL
+	moveq	#0,mfpreg	; reset MFP counter (d7)
+	moveq	#0,vblreg	; reset VBL counter (d6)
+	bsr.s	sync
+	lea	$fffffa1f.w,a5
+	move.b	#TC,$fffffa19.w	; start timer-A
+	rte
+
 vblirq2:
-	move.l	mfpreg,mfptmp	; store temporary MFP counter
-	addq.l	#1,vblreg	; increments VBL counter
-	cmp.l	mfpreg,mfptmp
+	bsr.s	sync
+	move.l	mfpreg,tmpreg	; store temporary MFP counter
+	addq.w	#1,vblreg	; increments VBL counter
+	cmp.l	mfpreg,tmpreg
 	beq.s	.ignore
-	move.l	mfpreg,mfptmp	; fast save the MFP counter
+	move.l	mfpreg,tmpreg	; fast save the MFP counter
 	tas.b	synced		; critical section
 	bne.s	.lost		; previous value not retrieved
-	move.l	mfptmp,mfpsyn
+	move.l	tmpreg,mfpsyn
 	move.l	vblreg,vblsyn
-	lsl.l	#TF,mfptmp
-	divu	vblreg,mfptmp
-	move.l	mfptmp,divsyn
+	clr.l	divsyn
 	
-.ignore:	
+.ignore:
 	rte
 .lost:
 	addq.l	#1,synlost
-	eor	#$300,$ffff8240.w
 	rte
 
 ;;; *******************************************************
@@ -345,9 +364,7 @@ vblirq2:
 ;;;
 timerA:
 	addq.l	#1,mfpreg	; increments MFP counter
-	;not.w	$ffff8240.w
 	rte
-
 
 ;;; *******************************************************
 ;;; *******************************************************
