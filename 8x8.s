@@ -1,7 +1,10 @@
 ;;; @file    8x8.s
-;;; @author  Ben/OVR
+;;; @author  Benjamin Gerard AKA Ben/OVR
 ;;; @date    2017
 ;;; @brief   8x8 1-bitplan TOS system font [0x20-0x7F].
+;;;
+;;; This is free and unencumbered software released into the public domain.
+;;; For more information, please refer to <http://unlicense.org>
 
 	dc.b	0,0,0,0,0,0,0,0
 	dc.b	$18,$18,$18,$18,$18,0,$18,0
