@@ -1,40 +1,14 @@
 ;;; @file    mfpcpu.s
-;;; @author  Ben/OVR
-;;; @date    2018-02-27
-;;; @brief   CPU/MFP clock ratio
-;;; @version 7
-;;;
-;;; -----------------------------------------------------------------------
+;;; @author  Benjamin Gerard AKA Ben/OVR
+;;; @date    2018-04-09
+;;; @brief   Estimate MFP-timers:CPU clock (VBL) ratio
 ;;;
 ;;; This is free and unencumbered software released into the public domain.
-;;;
-;;; Anyone is free to copy, modify, publish, use, compile, sell, or
-;;; distribute this software, either in source code form or as a compiled
-;;; binary, for any purpose, commercial or non-commercial, and by any
-;;; means.
-;;;
-;;; In jurisdictions that recognize copyright laws, the author or authors
-;;; of this software dedicate any and all copyright interest in the
-;;; software to the public domain. We make this dedication for the benefit
-;;; of the public at large and to the detriment of our heirs and
-;;; successors. We intend this dedication to be an overt act of
-;;; relinquishment in perpetuity of all present and future rights to this
-;;; software under copyright law.
-;;;
-;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-;;; EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-;;; MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-;;; IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-;;; OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-;;; ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-;;; OTHER DEALINGS IN THE SOFTWARE.
-;;;
-;;; For more information, please refer to <http://unlicense.org/>
+;;; For more information, please refer to <http://unlicense.org>
 
+VERSION: set 8
 
-;;; This version will count vbl and timer counts with predivisor 4 w/o
-;;; timer interruptions.
-
+	opt	o+,a+,w-
 
 mfpctH equr d5
 mfpctL equr d6
@@ -53,25 +27,28 @@ IRQA set 10	; First interrupt vector to save
 IRQZ set 256	; Save up to this vector (exclusive)
 NIRQ set IRQZ-IRQA
 
-	opt	o+,a+,w-
-
-
 ;;; *******************************************************
 
-	SECTION	TEXT
+	section text
 
 ;;; *******************************************************
 
 	bra.s	start
 	dc.b	"*** "
 	dc.b	"A simple program to compute "
-	dc.b    "MFP-timers/CPU clock ratio "
-	dc.b	"by using VBL synchro."
+	dc.b	"MFP-timers/CPU clock ratio "
+	dc.b	"by using VBL synchro. "
 	dc.b	"*** By Ben/OVR in 2018 ***"
 	dc.b	0
 
 	even
 start:
+	lea	ustack(pc),a7
+	bsr	aes_init
+
+	lea	omask(pc),a0
+	bsr	aes_mask
+
 	move.w	#2,-(a7)
 	trap	#14
 	addq	#2,a7
@@ -83,6 +60,8 @@ start:
 	addq	#6,a7
 	move.l	d0,saveusp
 	move.l	a7,savessp
+
+	;eor.b	#2,$ffff820a.w
 
 	;; Init records
 	move.l	#record,_recW
@@ -126,7 +105,7 @@ save_vectors:
 	bclr	#3,$fffffa17.w	; AEI
 
 	clr.b	$fffffa19.w	; stop timer-A
-	move.b	#TD,$fffffa1f.w	; count down
+	move.b	#TD,$fffffa1f.w ; count down
 	bset	#5,$fffffa07.w	; IER
 	bset	#5,$fffffa13.w	; IMR
 	move.l	#timerA,$134.w	; Install timer-A vector
@@ -255,9 +234,14 @@ rest_vectors:
 	move.l	nbrec(pc),d0
 	beq	.nosave
 
+	bsr	aes_fsel
+	tst.l	d0
+	beq.s	.nosave
+
 	clr.w	fhdl
 	clr.w	-(a7)		; mode.w
-	pea	oname(pc)	; fname.l
+	move.l	d0,-(a7)	; fpath.l
+	;pea	oname(pc)	; fname.l
 	move.w	#$3c,-(a7)	; Fcreate(fname.l,mode.w)
 	trap	#1
 	addq.w	#8,a7
@@ -346,9 +330,9 @@ cpufrq:
 	;; LSL #22
 	;; ---------------------
 	;; Inp: d3= ..:AB
-	;;      d0= ab:cd
+	;;	d0= ab:cd
 	;; Out: d3= Ba:bc
-	;;      d0= d.:..
+	;;	d0= d.:..
 
 	moveq	#63,d4		; d4= --:-X
 	rol.l	#6,d0		; d0= bc:da
@@ -403,7 +387,7 @@ cmpq:	macro
 	lea	q10(pc),a2
 
 .digit:
-	moveq	#$30,d4
+	moveq	#"0",d4
 	move.l	-(a1),d2	; d1:d2= mfp*10^n
 	move.l	-(a1),d1
 
@@ -416,7 +400,7 @@ cmpq:	macro
 	subx.l	d1,d3
 	bcc.s	.inc
 	;;
-.okdig:	cmp.l	a2,a1
+.okdig: cmp.l	a2,a1
 	beq.s	.done
 	;;
 	add.l	d2,d0
@@ -516,7 +500,7 @@ get_key:
 ;;; Clear screen and reset cursor position
 ;;;
 cls:
-	movem.l	d0-d1/a0,-(a7)
+	movem.l d0-d1/a0,-(a7)
 	move.l	phybase,a0
 	moveq	#0,d0
 	move.w	d0,cursor
@@ -526,7 +510,7 @@ cls:
 	move.l	d0,(a0)+
 	ENDR
 	dbf	d1,.cls
-	movem.l	(a7)+,d0-d1/a0
+	movem.l (a7)+,d0-d1/a0
 	rts
 
 ;;; *******************************************************
@@ -695,7 +679,7 @@ thex:	dc.b	"0123456789ABCDEF"
 ;;;
 vblirq:
 	;; Prepare timer start
-	movea.w	#$fa19,tdrreg	; TCR for 2nd VBL
+	movea.w #$fa19,tdrreg	; TCR for 2nd VBL
 	moveq	#TC,mfpctL	; TC  for 2nd VBL
 	move.l	#vblirq2,$70.w	; install new VBL
 	rte
@@ -704,15 +688,15 @@ vblirq:
 ;;;
 vblirq2:
 	moveq	#0,vblcnt	; clear VBL counter
-	move.b	mfpctL,(tdrreg)	; start timer
+	move.b	mfpctL,(tdrreg) ; start timer
 	moveq	#0,mfpctL	; clear MFP counter
-	movea.w	#$fa1f,tdrreg	; timer-A data register
+	movea.w #$fa1f,tdrreg	; timer-A data register
 	move.l	#vblirq3,$70.w	; install new VBL
 	rte
 
 vblirq3:
 	move.l	mfpctL,tmpreg	; save MFP counter
-	move.b	(tdrreg),mfpctH	; read timer count
+	move.b	(tdrreg),mfpctH ; read timer count
 	cmp.w	tmpreg,mfpctL	; timer interrupted ?
 	bne.s	.insync
 
@@ -735,7 +719,7 @@ vblirq3:
 	move.l	tmpreg,_mfp
 
 .cantlock:
-	moveq.l	#0,mfpctH
+	moveq.l #0,mfpctH
 	rte
 
 ;;; *******************************************************
@@ -748,7 +732,7 @@ timerA:
 ;;; *******************************************************
 ;;;
 ;;;
-declirq	macro
+declirq macro
 	move.w	#\1,numvec
 	move.l	#exit_nosave,2(a7)
 	rte
@@ -757,35 +741,39 @@ declirq	macro
 irqs:
 I	set	IRQA
 	rept	NIRQ
-	declirq	I
+	declirq I
 I	set	I+1
 	endr
 irqe:
 
 ;;; *******************************************************
 
-	SECTION	DATA
+	SECTION DATA
 
 ;;; *******************************************************
 
 font:	include "8x8.s"
 
-pszirq:	dc.b 27,'E'
+pszirq: dc.b 27,'E'
 	dc.b "Unexpected interruption @$"
-pszvec:	dc.b "00000000",10,13
+pszvec: dc.b "00000000",10,13
 	dc.b "Press <ESC> to exit",0
-pszhlp: dc.b "V7 | "
+pszhlp: dc.b "V","0"+VERSION," | "
 	dc.b "<SPC> pause | <F10> Save&Exit | <RET> Exit",0
-psztxt:	dc.b "mfp:$0000"
-mfptxt:	dc.b "00000000 vbl:$"
-vbltxt:	dc.b "00000000 cpu:"
-divtxt:	ds.b 32
+psztxt: dc.b "mfp:$0000"
+mfptxt: dc.b "00000000 vbl:$"
+vbltxt: dc.b "00000000 cpu:"
+divtxt: ds.b 32
 
-oname:	dc.b "mfpvblv7.rec",0
+oname:	dc.b "mfpvblv","0"+VERSION,".rec",0
+omask:	dc.b "*.rec",0
+
+	even
+	include "aes_fsel.s"
 
 ;;; *******************************************************
 
-	SECTION	BSS
+	SECTION BSS
 
 ;;; *******************************************************
 
@@ -819,10 +807,13 @@ savea17:	ds.b	1
 curkey:		ds.b	1
 
 	even
+		ds.l	256
+ustack:		ds.l	1
+
 savessp:	ds.l	1
 saveusp:	ds.l	1
 vectors:	ds.l	NIRQ
 
 	even
-record:		ds.b	1<<17	; 128Kb should be more than enough
+record:		ds.b	3<<17	; 384Kb should be more than enough
 endrec:		ds.l	4	; a bit more
