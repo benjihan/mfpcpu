@@ -6,7 +6,9 @@
 ;;; This is free and unencumbered software released into the public domain.
 ;;; For more information, please refer to <http://unlicense.org>
 
-VERSION: set 8
+	ifnd VERSION
+VERSION: set 9
+	endc
 
 	opt	o+,a+,w-
 
@@ -43,16 +45,65 @@ NIRQ set IRQZ-IRQA
 
 	even
 start:
-	lea	ustack(pc),a7
-	bsr	aes_init
+	;; Basic GEMDOS setup
+        move.l  4(a7),a0        ; Basepage
+        lea     ustack(pc),a7   ; Private user stack
+        move.l  $0c(a0),a1      ; TEXT size
+        adda.w  #$100,a1        ; Basepage size
+        adda.l  $14(a0),a1      ; DATA size
+        adda.l  $1c(a0),a1      ; BSS size
+        move.l  a1,-(a7)        ; Total size
+        move.l  a0,-(a7)        ; Base address
+        clr.w   -(a7)           ; Operand: 0=Release block
+        move.w  #$4a,-(a7)      ; Mshrink
+        trap    #1
+        lea     12(a7),a7
 
-	lea	omask(pc),a0
-	bsr	aes_mask
+	;; Init GEM/AES
+	bsr	aes_init	; Setup GEM/AES 
+	lea	omask(pc),a0	; "*.rec"
+	bsr	aes_mask	; Setup fileselector mask
 
+	;; Test compatible screen mode (PAL/medium)
+	
+	pea	getrez(pc)
+	move.w	#$26,-(a7)	; superexec
+	trap	#14
+	addq.w	#6,a7
+	cmp.w	#$0201,d0
+	beq.s	ok_rez
+	move.w	#2,ecode
+
+	;; Alert USER
+	moveq	#1,d0		; d0: default button index (1-based)
+	lea	.alert(pc),a0	; a0: alert dialog creation text
+	bsr	aes_alert
+	bra	sysexit
+.alert:
+	dc.b	"[3]"		; STOP !
+	dc.b	"[Invalid screen mode"
+	dc.b	"| "
+	dc.b	"|PAL Medium Rez required"
+	dc.b	"| "
+	dc.b	"|640x400x4 (50hz)]"
+	dc.b	"[exit]",0
+	even
+
+getrez:
+	move.w	$ffff820a.w,d0
+	move.b	$ffff8260.w,d0
+	and.w	#$0303,d0
+	rts
+	
+ok_rez:
 	move.w	#2,-(a7)
 	trap	#14
 	addq	#2,a7
 	move.l	d0,phybase
+
+	;; Hide mouse pointer
+	dc.w	$A000 	; Line-A Init
+	dc.w	$A00A	; Line-A Hidemouse
 
 	clr.l	-(a7)
 	move	#32,-(a7)
@@ -60,8 +111,6 @@ start:
 	addq	#6,a7
 	move.l	d0,saveusp
 	move.l	a7,savessp
-
-	;eor.b	#2,$ffff820a.w
 
 	;; Init records
 	move.l	#record,_recW
@@ -230,6 +279,9 @@ rest_vectors:
 	trap	#1
 	addq	#6,a7
 
+	;; Showmouse (Line-A)
+	dc.w	$A009
+	
 	;;
 	move.l	nbrec(pc),d0
 	beq	.nosave
@@ -295,9 +347,10 @@ waitesc:
 
 
 sysexit:
-	;; Exit
-	clr.w	-(a7)
-	trap	#1
+	;; Pterm(ecode)
+	move.w	ecode(pc),-(a7)
+	move.w	#$4c,-(a7)
+        trap	#1
 	illegal
 
 
@@ -784,36 +837,38 @@ cursory:	ds.b 1
 color:		ds.b 1
 
 	even
-_recW:		ds.l 1	;
-nbrec:		ds.l 1	;
+_recW:		ds.l 1
+nbrec:		ds.l 1
 
 	even
-lock:	ds.w	1
-_vbl:	ds.l	1
-_mfp:	ds.l	1
+lock:		ds.w 1
+_vbl:		ds.l 1
+_mfp:		ds.l 1
 
 	even
-q10:	ds.l	2*16
+q10:		ds.l 2*16
 
 	even
-lastvbl:	ds.l	1
-phybase:	ds.l	1
-fhdl:		ds.w	1
-numvec:		ds.w	1
-paused:		ds.b	1
-savea07:	ds.b	1
-savea09:	ds.b	1
-savea17:	ds.b	1
-curkey:		ds.b	1
+ecode:		ds.w 1
+srez:		ds.w 1
+lastvbl:	ds.l 1
+phybase:	ds.l 1
+fhdl:		ds.w 1
+numvec:		ds.w 1
+paused:		ds.b 1
+savea07:	ds.b 1
+savea09:	ds.b 1
+savea17:	ds.b 1
+curkey:		ds.b 1
 
 	even
-		ds.l	256
-ustack:		ds.l	1
+		ds.l 256
+ustack:		ds.l 1
 
-savessp:	ds.l	1
-saveusp:	ds.l	1
-vectors:	ds.l	NIRQ
+savessp:	ds.l 1
+saveusp:	ds.l 1
+vectors:	ds.l NIRQ
 
 	even
-record:		ds.b	3<<17	; 384Kb should be more than enough
-endrec:		ds.l	4	; a bit more
+record:		ds.b 3<<17	; 384Kb should be more than enough
+endrec:		ds.l 4		; a bit more
