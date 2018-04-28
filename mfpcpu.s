@@ -42,45 +42,47 @@ NIRQ set IRQZ-IRQA
 	dc.b	"by using VBL synchro. "
 	dc.b	"*** By Ben/OVR in 2018 ***"
 	dc.b	0
-
 	even
+
 start:
+	lea	write_record(pc),a0
+	
 	;; Basic GEMDOS setup
-        move.l  4(a7),a0        ; Basepage
-        lea     ustack(pc),a7   ; Private user stack
-        move.l  $0c(a0),a1      ; TEXT size
-        adda.w  #$100,a1        ; Basepage size
-        adda.l  $14(a0),a1      ; DATA size
-        adda.l  $1c(a0),a1      ; BSS size
-        move.l  a1,-(a7)        ; Total size
-        move.l  a0,-(a7)        ; Base address
-        clr.w   -(a7)           ; Operand: 0=Release block
-        move.w  #$4a,-(a7)      ; Mshrink
-        trap    #1
-        lea     12(a7),a7
+	move.l  4(a7),a0        ; Basepage
+	lea     ustack(pc),a7   ; Private user stack
+	move.l  $0c(a0),a1      ; TEXT size
+	adda.w  #$100,a1        ; Basepage size
+	adda.l  $14(a0),a1      ; DATA size
+	adda.l  $1c(a0),a1      ; BSS size
+	move.l  a1,-(a7)        ; Total size
+	move.l  a0,-(a7)        ; Base address
+	clr.w   -(a7)           ; Operand: 0=Release block
+	move.w  #$4a,-(a7)      ; Mshrink
+	trap    #1
+	lea     12(a7),a7
 
 	;; Init GEM/AES
-	bsr	aes_init	; Setup GEM/AES 
+	bsr	aes_init	; Setup GEM/AES
 	lea	omask(pc),a0	; "*.rec"
 	bsr	aes_mask	; Setup fileselector mask
 
 	;; Test compatible screen mode (PAL/medium)
-	
 	pea	getrez(pc)
 	move.w	#$26,-(a7)	; superexec
 	trap	#14
 	addq.w	#6,a7
 	cmp.w	#$0201,d0
 	beq.s	ok_rez
-	move.w	#2,ecode
 
-	;; Alert USER
+	;; /!\ Invalid screen mode /!\
 	moveq	#1,d0		; d0: default button index (1-based)
 	lea	.alert(pc),a0	; a0: alert dialog creation text
 	bsr	aes_alert
+
+	move.w	#1,ecode
 	bra	sysexit
 .alert:
-	dc.b	"[3]"		; STOP !
+	dc.b	"[3]"		; <STOP>
 	dc.b	"[Invalid screen mode"
 	dc.b	"| "
 	dc.b	"|PAL Medium Rez required"
@@ -94,15 +96,64 @@ getrez:
 	move.b	$ffff8260.w,d0
 	and.w	#$0303,d0
 	rts
-	
+
 ok_rez:
-	move.w	#2,-(a7)
+	;; Alloc record buffer
+
+	;; Get free memory
+	pea	-1.w
+	move.w	#$48,-(a7)	; Malloc(-1) -> Free memory
+	trap	#1
+	addq.w	#6,a7
+
+	cmp.l	#65536,d0
+	bge.s	ok_mem
+
+no_mem:
+	;; /!\ Not enough memory /!\
+	moveq	#1,d0		; d0: default button index (1-based)
+	lea	.alert(pc),a0	; a0: alert dialog creation text
+	bsr	aes_alert
+
+	move.w	#2,ecode
+	bra	sysexit
+.alert:
+	dc.b	"[3]"		; <STOP>
+	dc.b	"[Not enough free memory]"
+	dc.b	"[exit]",0
+	even
+
+ok_mem:
+	sub.l	#32768,d0	; leave a bit a free memory (for AES and such)
+	move.l	#$00400000,d1	; limit to 4MiB
+	cmp.l	d1,d0
+	blo.s	.ok
+	move.l	d1,d0
+.ok:
+	addq.l	#7,d0
+	moveq.l	#-8,d1
+	and.l	d1,d0		; multiple of 8
+	move.l	d0,d1
+
+	;; Allocate memory
+	move.l	d0,-(a7)
+	move.w	#$48,-(a7)	; Malloc
+	trap	#1
+	addq.w	#6,a7
+	tst.l	d0
+	beq.s	no_mem
+
+	move.l	d0,recBuf
+	add.l	d0,d1
+	move.l	d1,recEnd
+
+	move.w	#2,-(a7)	; Phybase
 	trap	#14
 	addq	#2,a7
 	move.l	d0,phybase
 
 	;; Hide mouse pointer
-	dc.w	$A000 	; Line-A Init
+	dc.w	$A000	; Line-A Init
 	dc.w	$A00A	; Line-A Hidemouse
 
 	clr.l	-(a7)
@@ -113,8 +164,7 @@ ok_rez:
 	move.l	a7,savessp
 
 	;; Init records
-	move.l	#record,_recW
-	clr.l	nbrec
+	move.l	recBuf(pc),recPtr
 
 	;; Write help string on both plans
 	bsr	cls
@@ -181,7 +231,6 @@ loop:	stop	#$2300
 	beq.s	loop
 	move.l	vblcnt,lastvbl
 
-	;;;;;;;;;;;;;;;;;;;;;;;;;
 	tst.b	lock		; locked ?
 	beq.s	.notlock
 
@@ -189,18 +238,14 @@ loop:	stop	#$2300
 	move.l	_vbl(pc),d3
 	clr.b	lock
 
-	;;;;;;;;;;;;;;;;;;;;;;;;;
-	ifne	1
-	move.l	_recW(pc),a0
+	move.l	recPtr(pc),a0
+	cmpa.l	recEnd(pc),a0
+	bne.s	.notfull
+	subq.w	#8,a0		; Last value always stored
+.notfull:
 	move.l	d2,(a0)+
 	move.l	d3,(a0)+
-	addq.l	#1,nbrec
-	cmpa.l	#endrec,a0
-	blo.s	.ok
-	lea	record(pc),a0
-.ok:
-	move.l	a0,_recW
-	endc
+	move.l	a0,recPtr
 
 	rol.l	#8,d2
 	moveq	#0,d1
@@ -245,7 +290,7 @@ loop:	stop	#$2300
 ;;;
 
 exit_nosave:
-	clr.l	nbrec		; Will prevent saving below
+	move.l	recBuf(pc),recPtr ; disable saving
 
 exit:
 	move	#$2700,sr
@@ -281,77 +326,138 @@ rest_vectors:
 
 	;; Showmouse (Line-A)
 	dc.w	$A009
-	
-	;;
-	move.l	nbrec(pc),d0
-	beq	.nosave
 
+	;; Something to save
+	move.l	recPtr(pc),d1
+	sub.l	recBuf(pc),d1
+	beq	nosave
+
+	;; Ask User for saving
+	move.w	#1,d0
+	lea	.alert(pc),a0
+	bsr	aes_alert
+	cmp.w	#1,d0
+	bne	nosave
+	bra.s	file_select
+.alert:
+	dc.b	"[2]"		; <?>
+	dc.b	"[Save records ?]"
+	dc.b	"[Save|Exit]",0
+	even
+
+file_select:
 	bsr	aes_fsel
+
 	tst.l	d0
-	beq.s	.nosave
+	beq	nosave
 
-	clr.w	fhdl
-	clr.w	-(a7)		; mode.w
-	move.l	d0,-(a7)	; fpath.l
-	;pea	oname(pc)	; fname.l
-	move.w	#$3c,-(a7)	; Fcreate(fname.l,mode.w)
-	trap	#1
-	addq.w	#8,a7
-	tst.w	d0
-	ble.s	.nosave
-	move.w	d0,fhdl
+	bsr	fcreate
+	bpl	write_record
 
+ask_retry:
+	move.w	#1,d0
+	lea	.alert(pc),a0
+	bsr	aes_alert
+	cmp.w	#1,d0
+	beq.s	file_select
+	bra.s	write_record
+.alert:
+	dc.b	"[2]"
+	dc.b	"[Saving went wrong."
+	dc.b	"| "
+	dc.b	"|Try again ?]"
+	dc.b	"[Save|Exit]",0
+	even
+
+write_record:
+	clr.w	ecode
 	;; Fwrite
-	move.l	nbrec(pc),d0
-	lsl.l	#3,d0
-	move.l	#endrec-record,d1
-	cmp.l	d1,d0
-	bls.s	.ok
-	move.l	d1,d0
-.ok:
-
-	pea	record(pc)	; adr.l
-	move.l	d0,-(a7)	; cnt.l
+	move.l	recBuf(pc),d0
+	move.l	recPtr(pc),d1
+	sub.l	d0,d1
+	move.l	d0,-(a7)	; adr.l
+	move.l	d1,-(a7)	; cnt.l
 	move.w	fhdl(pc),-(a7)	; hdl.w
 	move.w	#$40,-(a7)	; Fwrite(hdl.w,cnt.l,adr.l)
 	trap	#1
 	lea	12(a7),a7
+	;;
+	move.l	d0,-(a7)
+	bsr	fclose
+	move.l	(a7)+,d0
+	bpl	sysexit
+	move.w	d0,ecode
+	bra	ask_retry
 
-	;; Fclose
-	move.w	fhdl(pc),-(a7)	; hdl.w
-	move.w	#$3E,-(a7)	; Fclose(hdl.w)
-	trap	#1
-	addq.w	#4,a7
-	clr.w	fhdl
-
-.nosave:
+nosave:
 	moveq	#0,d0
 	move.w	numvec(pc),d0
 	beq	sysexit
+	;;
+	move.w	#$4000,d1
+	or.w	d0,d1
+	move.w	d1,ecode
+	;;
+	lea	.psz(pc),a0
+	bsr	htox
+	;;
+	move.w	#1,d0
+	lea	.alert(pc),a0
+	bsr	aes_alert
+	bra.s	sysexit
 
-	lsl	#2,d0
-	lea	pszvec(pc),a0
-	bsr	ltox
-
-	pea	pszirq(pc)
-	move.w	#9,-(a7)
-	trap	#1
-	addq	#6,a7
-
-waitesc:
-	move	#$7,-(a7)
-	trap	#1
-	addq	#2,a7
-	cmp.b	#27,d0
-	bne	waitesc
-
+.alert:
+	dc.b	"[3]"
+	dc.b	"[Catched exception #$"
+.psz:
+	dc.b	"0000]"
+	dc.b	"[Exit]",0
+	even
 
 sysexit:
+	;; Mfree(recBuf)
+	move.l	recBuf(pc),d0
+	beq.s	.nofree
+	move.l	d0,-(a7)	; addr.l
+	move.w	#$49,-(a7)	; Mfree(addr.l)
+	trap	#1
+	addq.w	#6,a7
+.nofree:
+
 	;; Pterm(ecode)
 	move.w	ecode(pc),-(a7)
 	move.w	#$4c,-(a7)
-        trap	#1
+	trap	#1
 	illegal
+
+;;; Inp: d0.l= fpath
+;;; Out: d0.w= handle or error
+fcreate:
+	clr.w	-(a7)		; mode.w
+	move.l	d0,-(a7)	; fpath.l
+	bsr	fclose
+	move.w	#$3c,-(a7)	; Fcreate(fname.l,mode.w)
+	trap	#1
+	addq.w	#8,a7
+	tst.w	d0
+	bmi.s	.error
+	move.w	d0,fhdl
+	rts
+.error:
+	move.w	d0,ecode
+	rts
+
+fclose:
+	move.w	fhdl(pc),d0
+	clr.w	fhdl
+	tst.w	d0
+	ble.s	.skip
+	move.w	d0,-(a7)	; hdl.w
+	move.w	#$3E,-(a7)	; Fclose(hdl.w)
+	trap	#1
+	addq.w	#4,a7
+.skip:
+	rts
 
 
 ;;; *******************************************************
@@ -807,12 +913,8 @@ irqe:
 
 font:	include "8x8.s"
 
-pszirq: dc.b 27,'E'
-	dc.b "Unexpected interruption @$"
-pszvec: dc.b "00000000",10,13
-	dc.b "Press <ESC> to exit",0
 pszhlp: dc.b "V","0"+VERSION," | "
-	dc.b "<SPC> pause | <F10> Save&Exit | <RET> Exit",0
+	dc.b "<SPC> pause | <F10> save&exit | <RET> Exit",0
 psztxt: dc.b "mfp:$0000"
 mfptxt: dc.b "00000000 vbl:$"
 vbltxt: dc.b "00000000 cpu:"
@@ -837,8 +939,9 @@ cursory:	ds.b 1
 color:		ds.b 1
 
 	even
-_recW:		ds.l 1
-nbrec:		ds.l 1
+recBuf:		ds.l 1		; record allocated buffer
+recEnd:		ds.l 1		; end of record buffer
+recPtr:		ds.l 1		; current record to write
 
 	even
 lock:		ds.w 1
@@ -850,7 +953,6 @@ q10:		ds.l 2*16
 
 	even
 ecode:		ds.w 1
-srez:		ds.w 1
 lastvbl:	ds.l 1
 phybase:	ds.l 1
 fhdl:		ds.w 1
@@ -861,14 +963,9 @@ savea09:	ds.b 1
 savea17:	ds.b 1
 curkey:		ds.b 1
 
-	even
-		ds.l 256
-ustack:		ds.l 1
-
 savessp:	ds.l 1
 saveusp:	ds.l 1
 vectors:	ds.l NIRQ
-
 	even
-record:		ds.b 3<<17	; 384Kb should be more than enough
-endrec:		ds.l 4		; a bit more
+		ds.l 128
+ustack:		ds.l 1
