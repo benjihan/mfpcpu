@@ -6,7 +6,7 @@
 ;;; This is free and unencumbered software released into the public domain.
 ;;; For more information, please refer to <http://unlicense.org>
 
-	opt	o+,w-,p+
+	opt	o+,w-
 
 ;;; ----------------------------------------------------------------------
 	TEXT
@@ -15,6 +15,7 @@
 	bra.w	aes_init
 	bra.w	aes_fsel	; d0> selected file path or 0.l
 	bra.w	aes_mask	; a0< filename
+	bra.w	aes_alert	; d0< def-button a0< text d0>button
 
 ;;; ----------------------------------------------------------------------
 aes_init:
@@ -65,6 +66,24 @@ aes:	lea	aespb(a6),a5
 	trap	#2
 	rts
 
+;;; ----------------------------------------------------------------------
+
+aes_alert:
+	movem.l	d1-a6,-(sp)
+	
+	lea	vars(pc),a6
+	move.w	d0,intinp+0(a6)
+	move.l	a0,adrinp+0(a6)
+	AESctl	52
+	move.w	intout+0(a6),d0
+	ext.l	d0
+	
+	movem.l	(sp)+,d1-a6
+	rts
+	
+;;; ----------------------------------------------------------------------
+
+	
 strcat:	tst.b	(a1)+
 	bne.s	strcat
 	subq.w	#1,a1
@@ -148,7 +167,9 @@ aes_fsel:
 	DATA
 
 aes10:	dc.w	10,0,1,0,0	; app_init() -> appid
+aes52:	dc.w	52,1,1,1,0	; form_alert (button,text) -> button index
 aes90:	dc.w	90,0,2,2,0	; fsel_input(inpath,inselect,&button)
+
 	
 mask:		dc.b "\*.*"
 		ds.b 12
