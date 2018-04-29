@@ -18,6 +18,10 @@ vblcnt equr d7
 tdrreg equr a6
 tmpreg equr a5
 
+
+VBLWIN set 1500
+
+
 ;;; ------------------------------
 
 TD set 0	; TDR
@@ -25,7 +29,7 @@ TC set 1	; TCR
 
 ;;; ------------------------------
 
-IRQA set 10	; First interrupt vector to save
+IRQA set 3	; First interrupt vector to save
 IRQZ set 256	; Save up to this vector (exclusive)
 NIRQ set IRQZ-IRQA
 
@@ -46,7 +50,7 @@ NIRQ set IRQZ-IRQA
 
 start:
 	lea	write_record(pc),a0
-	
+
 	;; Basic GEMDOS setup
 	move.l  4(a7),a0        ; Basepage
 	lea     ustack(pc),a7   ; Private user stack
@@ -133,7 +137,7 @@ ok_mem:
 	addq.l	#7,d0
 	moveq.l	#-8,d1
 	and.l	d1,d0		; multiple of 8
-	move.l	d0,d1
+	move.l	d0,d1		; d0=d1= record buffer size
 
 	;; Allocate memory
 	move.l	d0,-(a7)
@@ -143,9 +147,13 @@ ok_mem:
 	tst.l	d0
 	beq.s	no_mem
 
-	move.l	d0,recBuf
-	add.l	d0,d1
-	move.l	d1,recEnd
+	;; Init records
+	lea	recBuf(pc),a0
+	move.l	d0,(a0)+	; recBuf
+	move.l	d0,(a0)+	; recPtr
+	move.l	d0,(a0)+	; recWin
+	add.l	d1,d0		; +size
+	move.l	d0,(a0)+	; recEnd
 
 	move.w	#2,-(a7)	; Phybase
 	trap	#14
@@ -163,8 +171,6 @@ ok_mem:
 	move.l	d0,saveusp
 	move.l	a7,savessp
 
-	;; Init records
-	move.l	recBuf(pc),recPtr
 
 	;; Write help string on both plans
 	bsr	cls
@@ -226,18 +232,24 @@ wait1:	stop	#$2300		; Allow VBL
 ;;;
 
 
-loop:	stop	#$2300
+loop:
+	;; move.w	#$FFF,$ffff8240.w
+wait:
+	stop	#$2300
 	cmp.l	lastvbl,vblcnt
-	beq.s	loop
+	beq.s	wait
 	move.l	vblcnt,lastvbl
+	;; move.w	#$4F4,$ffff8240.w
 
 	tst.b	lock		; locked ?
-	beq.s	.notlock
+	beq	.notlock
 
-	move.l	_mfp(pc),d2
-	move.l	_vbl(pc),d3
+	;; Get locked values
+	move.l	_mfp(pc),d2	; d2= locked MFP
+	move.l	_vbl(pc),d3	; d3= locked VBL
 	clr.b	lock
 
+	;; Store record
 	move.l	recPtr(pc),a0
 	cmpa.l	recEnd(pc),a0
 	bne.s	.notfull
@@ -247,10 +259,41 @@ loop:	stop	#$2300
 	move.l	d3,(a0)+
 	move.l	a0,recPtr
 
+	;; Step window
+	move.l	recWin(pc),a2	; a2= recWin
+	lea	4(a2),a1	; a1= recWin->vbl (scan ptr)
+	movea.w	#VBLWIN,a3	; a3= window size (in VBLs)
+.scan:
+	move.l	d3,d4		; d4= locked VBL
+	sub.l	(a1),d4		; d4= elapsed VBL
+	sub.l	a3,d4
+	bmi.s	.okwin
+	lea	-4(a1),a2
+	addq.w	#8,a1
+	bra.s	.scan
+.okwin:
+	move.l	a2,recWin	; and store
+
+	move.l	d2,d0		; d0= locked MFP
+	sub.l	(a2)+,d0	; d0= windowed MFP
+	move.l	d3,d4		; d4= locked VBL
+	sub.l	(a2)+,d4	; d4= windowed VBL
+
+	lea	cpui(pc),a1
+	move.l	d4,8(a1)
+	moveq	#0,d4
+	rol.l	#8,d0
+	move.b	d0,d4
+	sub.b	d4,d0
+	move.l	d4,(a1)+
+	move.l	d0,(a1)+
+
+	sub.l	base+0(pc),d2
+	sub.l	base+4(pc),d3
 	rol.l	#8,d2
 	moveq	#0,d1
 	move.b	d2,d1
-	clr.b	d2
+	sub.b	d1,d2
 
 	move.b	#2,color
 	bsr	update
@@ -264,25 +307,64 @@ loop:	stop	#$2300
 	tst.b	paused
 	bne.s	.noupdate
 
-	moveq	#0,d1
-	move.l	mfpctL,d2
-	rol.l	#8,d2
-	move.b	d2,d1
-	move.b	mfpctH,d2
-	move.l	vblcnt,d3
+	moveq	#0,d1		; d1: 00000000
+	move.l	mfpctL,d2	; d2: realtime MFP
+	move.l	d2,d0		; d0: realtime MFP
+	rol.l	#8,d2		; d2: BBCCDDAA
+	move.b	d2,d1		; d1: 000000AA
+	move.b	mfpctH,d2	; d2: BBCCDDEE
+	move.l	vblcnt,d3	; d3: realtime VBL
 
+	lea	cpui+8(pc),a1
+	clr.l	(a1)
+
+	ifeq	0
+	;; ----------
+	move.l	recWin(pc),a0
+	cmp.l	recPtr(pc),a0
+	beq	.nowin
+
+	move.l	d3,d4		;
+	sub.l	4(a0),d4	; d4: windowed VBL
+	move.l	d4,(a1)		; * VBL
+
+	moveq	#0,d4		; d4: 00000000
+	sub.l	(a0),d0		; d0: windowed MFP
+	rol.l	#8,d0		; d0: BBCCDDAA
+	move.b	d0,d4
+	move.b	d2,d0
+	move.l	d0,-(a1)	; * MFP-L
+	move.l	d4,-(a1)	; * MFP-H
+	;; ----------
+	endc
+
+.nowin:
 	move.b	#3,color
 	bsr	update
 
 .noupdate:
 	bsr	get_key
+	;;
 	cmp.b	#$44,d0		; <F10>
 	beq	exit
+	;;
 	cmp.b	#$1C,d0		; <RETURN>
-	beq	exit_nosave
+	beq	rebase
+	;;
 	cmp.b	#$39,d0		; <SPACE>
 	bne	loop
+	;;
 	not.b	paused
+	bra	loop
+
+rebase:
+	move.l	recPtr(pc),a0
+	cmp.l	recBuf(pc),a0
+	beq	loop
+	subq.w	#8,a0
+	lea	base(pc),a1
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
 	bra	loop
 
 ;;; *******************************************************
@@ -333,7 +415,7 @@ rest_vectors:
 	beq	nosave
 
 	;; Ask User for saving
-	move.w	#1,d0
+	move.w	#2,d0
 	lea	.alert(pc),a0
 	bsr	aes_alert
 	cmp.w	#1,d0
@@ -430,8 +512,13 @@ sysexit:
 	trap	#1
 	illegal
 
+
+;;; *******************************************************
+;;; Open/create new record file.
+;;;
 ;;; Inp: d0.l= fpath
 ;;; Out: d0.w= handle or error
+
 fcreate:
 	clr.w	-(a7)		; mode.w
 	move.l	d0,-(a7)	; fpath.l
@@ -446,6 +533,10 @@ fcreate:
 .error:
 	move.w	d0,ecode
 	rts
+
+
+;;; *******************************************************
+;;; Close current file handle (if opened).
 
 fclose:
 	move.w	fhdl(pc),d0
@@ -465,10 +556,10 @@ fclose:
 ;;;
 ;;; CPU= (VBL * $5bb3 << 22) / MFP (Overflow VBL>$b2abcd0
 ;;;
-;;; d1.w mfpH
-;;; d2.l mfpL
-;;; d3.l vbl
-;;; a0.l string
+;;; d1.w: mfpH
+;;; d2.l: mfpL
+;;; d3.l: vbl
+;;; a0.l: string
 
 cpufrq:
 	;; MUL #$5BB3
@@ -583,19 +674,31 @@ update:
 	move.w	d1,d0
 	lea	mfptxt-4,a0
 	bsr	htox
-
+	;;
 	move.l	d2,d0
 	lea	mfptxt,a0
 	bsr	ltox
-
+	;;
 	move.l	d3,d0
 	lea	vbltxt,a0
 	bsr	ltox
-
+	;;
 	lea	divtxt(pc),a0
 	bsr	cpufrq
-	clr.b	(a0)
 
+	movem.l	cpui(pc),d1-d3
+	tst.l	d3
+	beq.s	.nocpu
+
+	lea	cputxt(pc),a1
+	exg.l	a0,a1
+	bsr	strcpy
+	exg.l	a0,a1
+
+	bsr	cpufrq
+
+.nocpu:
+	clr.b	(a0)
 	clr.b	cursorx		; <CR>
 	pea	psztxt
 	bsr	psz_puts
@@ -608,6 +711,7 @@ update:
 ;;;
 ;;;  Inp: d0.b command to write
 ;;;
+
 put_ikbd:
 	btst	#1,$fffffc00.w
 	beq.s	put_ikbd
@@ -617,6 +721,7 @@ put_ikbd:
 ;;; *******************************************************
 ;;; Reset keyboard
 ;;;
+
 clear_acias:
 	moveq	#$13,d0		; disable transfert
 	bsr	put_ikbd
@@ -637,6 +742,7 @@ clear_acias:
 ;;;
 ;;;  Out: d0=char (0:none)
 ;;;
+
 get_key:
 	btst	#1,$fffffc00.w
 	beq.s	.nokey
@@ -658,6 +764,7 @@ get_key:
 ;;; *******************************************************
 ;;; Clear screen and reset cursor position
 ;;;
+
 cls:
 	movem.l d0-d1/a0,-(a7)
 	move.l	phybase,a0
@@ -878,18 +985,18 @@ vblirq3:
 	move.l	tmpreg,_mfp
 
 .cantlock:
-	moveq.l #0,mfpctH
+	moveq	#0,mfpctH
 	rte
 
 ;;; *******************************************************
-;;;
+;;;  Timer A interrupt routine (increments mfpctL)
 
 timerA:
 	addq.l	#1,mfpctL
 	rte
 
 ;;; *******************************************************
-;;;
+;;;  Catched Exceptions
 ;;;
 declirq macro
 	move.w	#\1,numvec
@@ -914,17 +1021,19 @@ irqe:
 font:	include "8x8.s"
 
 pszhlp: dc.b "V","0"+VERSION," | "
-	dc.b "<SPC> pause | <F10> save&exit | <RET> Exit",0
+	dc.b "<SPC> Display | <F10> Exit | <RET> Rebase",0
 psztxt: dc.b "mfp:$0000"
 mfptxt: dc.b "00000000 vbl:$"
-vbltxt: dc.b "00000000 cpu:"
-divtxt: ds.b 32
+vbltxt: dc.b "00000000 avg:"
+divtxt: ds.b 64
+cputxt:	dc.b " cpu:",0
 
 oname:	dc.b "mfpvblv","0"+VERSION,".rec",0
 omask:	dc.b "*.rec",0
 
 	even
 	include "aes_fsel.s"
+	even
 
 ;;; *******************************************************
 
@@ -932,25 +1041,27 @@ omask:	dc.b "*.rec",0
 
 ;;; *******************************************************
 
+base:	ds.l	2
+cpui:	ds.l	3
+
 	even
 cursor:
 cursorx:	ds.b 1
 cursory:	ds.b 1
 color:		ds.b 1
+curkey:		ds.b 1
 
 	even
-recBuf:		ds.l 1		; record allocated buffer
-recEnd:		ds.l 1		; end of record buffer
-recPtr:		ds.l 1		; current record to write
-
+recBuf:		ds.l 1		; / record allocated buffer
+recPtr:		ds.l 1		; | current record to write
+recWin:		ds.l 1		; | Instant window start
+recEnd:		ds.l 1		; \ end of record buffer
 	even
 lock:		ds.w 1
 _vbl:		ds.l 1
 _mfp:		ds.l 1
-
 	even
 q10:		ds.l 2*16
-
 	even
 ecode:		ds.w 1
 lastvbl:	ds.l 1
@@ -961,8 +1072,7 @@ paused:		ds.b 1
 savea07:	ds.b 1
 savea09:	ds.b 1
 savea17:	ds.b 1
-curkey:		ds.b 1
-
+	even
 savessp:	ds.l 1
 saveusp:	ds.l 1
 vectors:	ds.l NIRQ
