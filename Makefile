@@ -16,3 +16,11 @@ PHONY: all clean
 
 $(target): mfpcpu.s 8x8.s aes_fsel.s
 	$(VASM) $(VASM_FLAGS) -o $@ $<
+
+
+INSTALLDIR = $(error INSTALLDIR must be defined)
+
+install: $(target)
+	test -d "$(INSTALLDIR)" || mkdir -pv -- "$(INSTALLDIR)"
+	cp -v -- $< "$(INSTALLDIR)"/$(<F)
+
