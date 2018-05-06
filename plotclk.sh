@@ -5,10 +5,13 @@
 # By Ben G. AKA Ben/OVR
 #
 
-which gnuplot >/dev/null
-
 if [ -z "${recdecode-}" ]; then
     recdecode=$(dirname "$0")/recdecode.py
+fi
+
+if [ ! -x "${recdecode}" ]; then
+    echo "plotclk.sh: recdecode not executable -- ${recdecode}" >&2
+    exit 2
 fi
 
 if [ -z "$1" ] || [ ! -r "$1" ]; then
@@ -38,9 +41,9 @@ fi
 
 set -o pipefail
 
-${recdecode} "$@" >$inp
+"${recdecode}" "$@" >$inp
 
-cat <<EOF | gnuplot
+cat <<EOF | ${gnuplot-gnuplot}
 
     reset
 
