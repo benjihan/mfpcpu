@@ -49,8 +49,6 @@ NIRQ set IRQZ-IRQA
 	even
 
 start:
-	lea	write_record(pc),a0
-
 	;; Basic GEMDOS setup
 	move.l  4(a7),a0        ; Basepage
 	lea     ustack(pc),a7   ; Private user stack
@@ -91,7 +89,7 @@ start:
 	dc.b	"| "
 	dc.b	"|PAL Medium Rez required"
 	dc.b	"| "
-	dc.b	"|640x400x4 (50hz)]"
+	dc.b	"|640x200x4 (50hz)]"
 	dc.b	"[exit]",0
 	even
 
