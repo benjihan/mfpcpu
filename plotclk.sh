@@ -1,9 +1,8 @@
-#!/bin/sh -e
+#! /bin/bash -e
 #
-# Plot mfpcpu.py output
-#
-# By Ben G. AKA Ben/OVR
-#
+# @file   plotclk.sh
+# @author Ben^OVR
+# @brief  Plot mfpcpu.py output
 
 if [ -z "${recdecode-}" ]; then
     recdecode=$(dirname "$0")/recdecode.py
@@ -27,9 +26,9 @@ Usage: plotclk.sh file.rec [windows-seconds]
 EOF
 	exit 1
 esac
-	
+
 inp=$(mktemp)
-trap "rm -- $inp" EXIT 
+trap "rm -- $inp" EXIT
 
 if [[ "$1" = *.* ]]; then
     pic="${1%.*}".png
@@ -48,11 +47,11 @@ cat <<EOF | ${gnuplot-gnuplot}
     reset
 
     set term pngcairo \
-    	enhanced \
-    	color \
-     	font "arial,9" \
-    	background "#081014" \
-    	size 1024, 512
+	enhanced \
+	color \
+	font "arial,9" \
+	background "#081014" \
+	size 1024, 512
 
     set output "$pic"
 
@@ -63,7 +62,7 @@ cat <<EOF | ${gnuplot-gnuplot}
     set style line 52 lt 1 lc rgb "yellow" lw 1
 
     set title "${title} - CPU clock estimation using MFP:VBL ratio" \
-    	tc "white" font "arial,12" enhanced
+	tc "white" font "arial,12" enhanced
 
     set xlabel 'Elapsed time (hours)'   textcolor "white"
     set ylabel 'Estimated CPU clocks (hz)' textcolor "white"
@@ -81,11 +80,11 @@ cat <<EOF | ${gnuplot-gnuplot}
     # set yrange [8010630:8010720]
     #set yrange [8021247.5:8021248.5]
 
-    set object 1 rectangle from graph 0,0 to graph 1,1 behind fc rgb "#203050" 
+    set object 1 rectangle from graph 0,0 to graph 1,1 behind fc rgb "#203050"
 
     plot \
-    	 "$inp" using 1:2 with lines smooth bezier ls 50 t "Average" ,\
-    	 "$inp" using 1:3 with lines smooth bezier ls 52 t "Instant"
+	 "$inp" using 1:2 with lines smooth bezier ls 50 t "Average" ,\
+	 "$inp" using 1:3 with lines smooth bezier ls 52 t "Instant"
 
     exit
 
