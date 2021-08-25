@@ -1,13 +1,13 @@
-;;; @file    mfpcpu.s
-;;; @author  Benjamin Gerard AKA Ben/OVR
-;;; @date    2018-04-09
+;;; @file	   mfpcpu.s
+;;; @author  Benjamin Gerard AKA Ben^OVR
+;;; @date	   2018-04-09
 ;;; @brief   Estimate MFP-timers:CPU clock (VBL) ratio
 ;;;
 ;;; This is free and unencumbered software released into the public domain.
 ;;; For more information, please refer to <http://unlicense.org>
 
 	ifnd VERSION
-VERSION: set 9
+VERSION:	set	10
 	endc
 
 	opt	o+,a+,w-
@@ -29,8 +29,8 @@ TC set 1	; TCR
 
 ;;; ------------------------------
 
-IRQA set 3	; First interrupt vector to save
-IRQZ set 256	; Save up to this vector (exclusive)
+IRQA set 3		    ; First interrupt vector to save
+IRQZ set 256		    ; Save up to this vector (exclusive)
 NIRQ set IRQZ-IRQA
 
 ;;; *******************************************************
@@ -44,29 +44,29 @@ NIRQ set IRQZ-IRQA
 	dc.b	"A simple program to compute "
 	dc.b	"MFP-timers/CPU clock ratio "
 	dc.b	"by using VBL synchro. "
-	dc.b	"*** By Ben/OVR in 2018 ***"
+	dc.b	"*** By Ben^OVR in 2018 ***"
 	dc.b	0
 	even
 
 start:
 	;; Basic GEMDOS setup
-	move.l  4(a7),a0        ; Basepage
-	lea     ustack(pc),a7   ; Private user stack
-	move.l  $0c(a0),a1      ; TEXT size
-	adda.w  #$100,a1        ; Basepage size
-	adda.l  $14(a0),a1      ; DATA size
-	adda.l  $1c(a0),a1      ; BSS size
-	move.l  a1,-(a7)        ; Total size
-	move.l  a0,-(a7)        ; Base address
-	clr.w   -(a7)           ; Operand: 0=Release block
-	move.w  #$4a,-(a7)      ; Mshrink
+	move.l  4(a7),a0		; Basepage
+	lea     ustack(pc),a7	; Private user stack
+	move.l  $0c(a0),a1		; TEXT size
+	adda.w  #$100,a1		; Basepage size
+	adda.l  $14(a0),a1		; DATA size
+	adda.l  $1c(a0),a1		; BSS size
+	move.l  a1,-(a7)		; Total size
+	move.l  a0,-(a7)		; Base address
+	clr.w   -(a7)		; Operand: 0=Release block
+	move.w  #$4a,-(a7)		; Mshrink
 	trap    #1
 	lea     12(a7),a7
 
 	;; Init GEM/AES
-	bsr	aes_init	; Setup GEM/AES
+	bsr	aes_init		; Setup GEM/AES
 	lea	omask(pc),a0	; "*.rec"
-	bsr	aes_mask	; Setup fileselector mask
+	bsr	aes_mask		; Setup fileselector mask
 
 	;; Test compatible screen mode (PAL/medium)
 	pea	getrez(pc)
@@ -77,8 +77,8 @@ start:
 	beq.s	ok_rez
 
 	;; /!\ Invalid screen mode /!\
-	moveq	#1,d0		; d0: default button index (1-based)
-	lea	.alert(pc),a0	; a0: alert dialog creation text
+	moveq	#1,d0	    ; d0: default button index (1-based)
+	lea	.alert(pc),a0 ; a0: alert dialog creation text
 	bsr	aes_alert
 
 	move.w	#1,ecode
@@ -147,20 +147,20 @@ ok_mem:
 
 	;; Init records
 	lea	recBuf(pc),a0
-	move.l	d0,(a0)+	; recBuf
-	move.l	d0,(a0)+	; recPtr
-	move.l	d0,(a0)+	; recWin
+	move.l	d0,(a0)+		; recBuf
+	move.l	d0,(a0)+		; recPtr
+	move.l	d0,(a0)+		; recWin
 	add.l	d1,d0		; +size
-	move.l	d0,(a0)+	; recEnd
+	move.l	d0,(a0)+		; recEnd
 
-	move.w	#2,-(a7)	; Phybase
+	move.w	#2,-(a7)		; Phybase
 	trap	#14
 	addq	#2,a7
 	move.l	d0,phybase
 
 	;; Hide mouse pointer
-	dc.w	$A000	; Line-A Init
-	dc.w	$A00A	; Line-A Hidemouse
+	dc.w	$A000		; Line-A Init
+	dc.w	$A00A		; Line-A Hidemouse
 
 	clr.l	-(a7)
 	move	#32,-(a7)
@@ -168,16 +168,26 @@ ok_mem:
 	addq	#6,a7
 	move.l	d0,saveusp
 	move.l	a7,savessp
+	move.l	$ffff8240.w,savepal+0
+	move.l	$ffff8244.w,savepal+4
 
+	move.l	colut+0,$ffff8240.w
+	move.l	colut+4,$ffff8244.w
 
 	;; Write help string on both plans
 	bsr	cls
 	clr.w	cursor
-	move.b	#0,color
+	clr.b	color
 	pea	pszhlp
 	bsr	psz_puts
-	move.w	#$0001,cursor
 
+	move.b	#3,color
+	move.w	#24,cursor
+	pea	pszcpy
+	bsr	psz_puts
+
+	move.b	#24,scr_h
+	move.w	#1,cursor
 	bsr	clear_acias
 
 	move.w	#$2700,sr
@@ -208,7 +218,7 @@ save_vectors:
 	bclr	#3,$fffffa17.w	; AEI
 
 	clr.b	$fffffa19.w	; stop timer-A
-	move.b	#TD,$fffffa1f.w ; count down
+	move.b	#TD,$fffffa1f.w	; count down
 	bset	#5,$fffffa07.w	; IER
 	bset	#5,$fffffa13.w	; IMR
 	move.l	#timerA,$134.w	; Install timer-A vector
@@ -259,7 +269,7 @@ wait:
 
 	;; Step window
 	move.l	recWin(pc),a2	; a2= recWin
-	lea	4(a2),a1	; a1= recWin->vbl (scan ptr)
+	lea	4(a2),a1		; a1= recWin->vbl (scan ptr)
 	movea.w	#VBLWIN,a3	; a3= window size (in VBLs)
 .scan:
 	move.l	d3,d4		; d4= locked VBL
@@ -273,9 +283,9 @@ wait:
 	move.l	a2,recWin	; and store
 
 	move.l	d2,d0		; d0= locked MFP
-	sub.l	(a2)+,d0	; d0= windowed MFP
+	sub.l	(a2)+,d0		; d0= windowed MFP
 	move.l	d3,d4		; d4= locked VBL
-	sub.l	(a2)+,d4	; d4= windowed VBL
+	sub.l	(a2)+,d4		; d4= windowed VBL
 
 	lea	cpui(pc),a1
 	move.l	d4,8(a1)
@@ -306,12 +316,12 @@ wait:
 	bne.s	.noupdate
 
 	moveq	#0,d1		; d1: 00000000
-	move.l	mfpctL,d2	; d2: realtime MFP
+	move.l	mfpctL,d2		; d2: realtime MFP
 	move.l	d2,d0		; d0: realtime MFP
 	rol.l	#8,d2		; d2: BBCCDDAA
 	move.b	d2,d1		; d1: 000000AA
-	move.b	mfpctH,d2	; d2: BBCCDDEE
-	move.l	vblcnt,d3	; d3: realtime VBL
+	move.b	mfpctH,d2		; d2: BBCCDDEE
+	move.l	vblcnt,d3		; d3: realtime VBL
 
 	lea	cpui+8(pc),a1
 	clr.l	(a1)
@@ -323,7 +333,7 @@ wait:
 	beq	.nowin
 
 	move.l	d3,d4		;
-	sub.l	4(a0),d4	; d4: windowed VBL
+	sub.l	4(a0),d4		; d4: windowed VBL
 	move.l	d4,(a1)		; * VBL
 
 	moveq	#0,d4		; d4: 00000000
@@ -331,13 +341,13 @@ wait:
 	rol.l	#8,d0		; d0: BBCCDDAA
 	move.b	d0,d4
 	move.b	d2,d0
-	move.l	d0,-(a1)	; * MFP-L
-	move.l	d4,-(a1)	; * MFP-H
+	move.l	d0,-(a1)		; * MFP-L
+	move.l	d4,-(a1)		; * MFP-H
 	;; ----------
 	endc
 
 .nowin:
-	move.b	#3,color
+	move.b	#1,color
 	bsr	update
 
 .noupdate:
@@ -356,6 +366,7 @@ wait:
 	bra	loop
 
 rebase:
+	move.w	#1,cursor
 	move.l	recPtr(pc),a0
 	cmp.l	recBuf(pc),a0
 	beq	loop
@@ -370,10 +381,12 @@ rebase:
 ;;;
 
 exit_nosave:
-	move.l	recBuf(pc),recPtr ; disable saving
+	move.l	recBuf(pc),recPtr	; disable saving
 
 exit:
 	move	#$2700,sr
+	move.l	savepal+0,$ffff8240.w
+	move.l	savepal+4,$ffff8244.w
 	clr.b	$fffffa19.w	; stop timer-A
 	bclr	#5,$fffffa07.w	; IER
 	bclr	#5,$fffffa13.w	; IMR
@@ -498,7 +511,7 @@ sysexit:
 	;; Mfree(recBuf)
 	move.l	recBuf(pc),d0
 	beq.s	.nofree
-	move.l	d0,-(a7)	; addr.l
+	move.l	d0,-(a7)		; addr.l
 	move.w	#$49,-(a7)	; Mfree(addr.l)
 	trap	#1
 	addq.w	#6,a7
@@ -519,7 +532,7 @@ sysexit:
 
 fcreate:
 	clr.w	-(a7)		; mode.w
-	move.l	d0,-(a7)	; fpath.l
+	move.l	d0,-(a7)		; fpath.l
 	bsr	fclose
 	move.w	#$3c,-(a7)	; Fcreate(fname.l,mode.w)
 	trap	#1
@@ -541,7 +554,7 @@ fclose:
 	clr.w	fhdl
 	tst.w	d0
 	ble.s	.skip
-	move.w	d0,-(a7)	; hdl.w
+	move.w	d0,-(a7)		; hdl.w
 	move.w	#$3E,-(a7)	; Fclose(hdl.w)
 	trap	#1
 	addq.w	#4,a7
@@ -636,7 +649,7 @@ cmpq:	macro
 
 .digit:
 	moveq	#"0",d4
-	move.l	-(a1),d2	; d1:d2= mfp*10^n
+	move.l	-(a1),d2		; d1:d2= mfp*10^n
 	move.l	-(a1),d1
 
 	sub.l	d2,d0
@@ -764,7 +777,7 @@ get_key:
 ;;;
 
 cls:
-	movem.l d0-d1/a0,-(a7)
+	movem.l	d0-d1/a0,-(a7)
 	move.l	phybase,a0
 	moveq	#0,d0
 	move.w	d0,cursor
@@ -774,7 +787,7 @@ cls:
 	move.l	d0,(a0)+
 	ENDR
 	dbf	d1,.cls
-	movem.l (a7)+,d0-d1/a0
+	movem.l	(a7)+,d0-d1/a0
 	rts
 
 ;;; *******************************************************
@@ -809,14 +822,18 @@ putc:
 	move.l	phybase,a1
 
 	; Ensure cursor is inside screen
+
+	moveq	#0,d0
 	move.b	cursorx,d0
+	moveq	#0,d1
 	move.b	cursory,d1
-	cmp.b	#80,d0
+
+	cmp.b	scr_w,d0
 	blo.s	.okx
 	moveq	#0,d0
 	addq.b	#1,d1
 .okx:
-	cmp.b	#25,d1
+	cmp.b	scr_h,d1
 	blo.s	.oky
 	moveq	#1,d1
 .oky:
@@ -824,8 +841,6 @@ putc:
 	move.b	d1,cursory
 
 	;; cursor -> screen address
-	moveq	#0,d0
-	move.b	cursorx,d0
 	moveq	#1,d1
 	and.w	d0,d1
 	adda.w	d1,a1
@@ -858,11 +873,12 @@ putc:
 	;; -------------
 N SET 0
 .col0:
+	not.b	d0
 	REPT	8
 	move.b	(a0)+,d1
+	move.b	d0,N+2(a1)
 	not.b	d1
 	move.b	d1,N+0(a1)
-	move.b	d1,N+2(a1)
 N SET N+160
 	ENDR
 	rts
@@ -870,9 +886,12 @@ N SET N+160
 	;; -------------
 N SET 0
 .col1:
+	not.b	d0
 	REPT	8
+	move.b	(a0)+,d1
 	move.b	d0,N+0(a1)
-	move.b	(a0)+,N+2(a1)
+	not.b	d1
+	move.b	d1,N+2(a1)
 N SET N+160
 	ENDR
 	rts
@@ -881,8 +900,11 @@ N SET N+160
 N SET 0
 .col2:
 	REPT	8
-	move.b	(a0)+,N+0(a1)
-	move.b	d0,N+2(a1)
+	move.b	(a0)+,d1
+	move.b	d1,N+0(a1)
+	move.b	d1,N+2(a1)
+	;; move.b	(a0)+,N+2(a1)
+	;; move.b	d0,N+0(a1)
 N SET N+160
 	ENDR
 	rts
@@ -890,10 +912,11 @@ N SET N+160
 	;; -------------
 N SET 0
 .col3:
+	not.b	d0
 	REPT	8
 	move.b	(a0)+,d1
 	move.b	d1,N+0(a1)
-	move.b	d1,N+2(a1)
+	move.b	d0,N+2(a1)
 N SET N+160
 	ENDR
 	rts
@@ -943,7 +966,7 @@ thex:	dc.b	"0123456789ABCDEF"
 ;;;
 vblirq:
 	;; Prepare timer start
-	movea.w #$fa19,tdrreg	; TCR for 2nd VBL
+	movea.w	#$fa19,tdrreg	; TCR for 2nd VBL
 	moveq	#TC,mfpctL	; TC  for 2nd VBL
 	move.l	#vblirq2,$70.w	; install new VBL
 	rte
@@ -951,36 +974,35 @@ vblirq:
 ;;; 1st VBL init counters and records before starting the timer
 ;;;
 vblirq2:
-	moveq	#0,vblcnt	; clear VBL counter
-	move.b	mfpctL,(tdrreg) ; start timer
-	moveq	#0,mfpctL	; clear MFP counter
-	movea.w #$fa1f,tdrreg	; timer-A data register
+	moveq	#0,vblcnt		; clear VBL counter
+	move.b	mfpctL,(tdrreg)	; start timer
+	moveq	#0,mfpctL		; clear MFP counter
+	movea.w	#$fa1f,tdrreg	; timer-A data register
 	move.l	#vblirq3,$70.w	; install new VBL
 	rte
 
 vblirq3:
 	move.l	mfpctL,tmpreg	; save MFP counter
-	move.b	(tdrreg),mfpctH ; read timer count
+	move.b	(tdrreg),mfpctH	; read timer count
 	cmp.w	tmpreg,mfpctL	; timer interrupted ?
 	bne.s	.insync
 
 	neg.b	mfpctH		; count-down to count-up
-	addq.l	#1,vblcnt	; update VBL counter
+	addq.l	#1,vblcnt		; update VBL counter
 	rte
 
 .insync:
 	;; At this point we assume the counters are:
 	;; vbl: vblcount+1
-	;; mfp: tmpreg+1
+	;; mfp: tmpreg+1 or mfpctL
 
-	addq.l	#1,vblcnt	; update VBL counter
-	addq.l	#1,tmpreg	; update MFP counter
+	addq.l	#1,vblcnt		; update VBL counter
 
 	tas	lock		; try to lock
-	bne.s	.cantlock	; Ooopsy daisy
+	bne.s	.cantlock		; Ooopsy daisy
 
 	move.l	vblcnt,_vbl
-	move.l	tmpreg,_mfp
+	move.l	mfpctL,_mfp
 
 .cantlock:
 	moveq	#0,mfpctH
@@ -996,18 +1018,18 @@ timerA:
 ;;; *******************************************************
 ;;;  Catched Exceptions
 ;;;
-declirq macro
+declirq:	Macro
 	move.w	#\1,numvec
 	move.l	#exit_nosave,2(a7)
 	rte
-	endm
+	EndM
 
 irqs:
 I	set	IRQA
-	rept	NIRQ
+	Rept	NIRQ
 	declirq I
 I	set	I+1
-	endr
+	EndR
 irqe:
 
 ;;; *******************************************************
@@ -1018,16 +1040,43 @@ irqe:
 
 font:	include "8x8.s"
 
-pszhlp: dc.b "V","0"+VERSION," | "
-	dc.b "<SPC> Display | <F10> Exit | <RET> Rebase",0
-psztxt: dc.b "mfp:$0000"
-mfptxt: dc.b "00000000 vbl:$"
-vbltxt: dc.b "00000000 avg:"
-divtxt: ds.b 64
-cputxt:	dc.b " cpu:",0
+colut:	dc.w	$567
+	dc.w	$664
+	dc.w	$345
+	dc.w	$012
 
-oname:	dc.b "mfpvblv","0"+VERSION,".rec",0
-omask:	dc.b "*.rec",0
+scr_w:	dc.b	80
+scr_h:	dc.b	25
+
+VERSTR:	Macro
+	iflt	VERSION-10
+	dc.b	"0"
+	endc
+	dc.b	"\<VERSION>"
+	EndM
+
+pszhlp:
+	dc.b	" >> Menu << | "
+	dc.b	"<SPC> Display | <F10> Exit | <RET> Rebase"
+	dcb.b	80-(*-pszhlp)," "
+	dc.b	0
+
+pszcpy:	dcb.b	18," "
+	dc.b	"MFPCPU v"
+	VERSTR
+	dc.b	" ~ Written by Ben^OVR in 2018-2021"
+	dcb.b	80-(*-pszcpy)," "
+	dc.b	0
+
+psztxt:	dc.b	"mfp:$0000"
+mfptxt:	dc.b	"00000000 vbl:$"
+vbltxt:	dc.b	"00000000 avg:"
+divtxt:	ds.b	64
+cputxt:	dc.b	" cpu:",0
+oname:	dc.b	"mfpvbl"
+	VERSTR
+	dc.b	".rec",0
+omask:	dc.b	"*.rec",0
 
 	even
 	include "aes_fsel.s"
@@ -1044,36 +1093,44 @@ cpui:	ds.l	3
 
 	even
 cursor:
-cursorx:	ds.b 1
-cursory:	ds.b 1
-color:		ds.b 1
-curkey:		ds.b 1
+cursorx:	ds.b	1
+cursory:	ds.b	1
+color:	ds.b	1
+curkey:	ds.b	1
 
 	even
-recBuf:		ds.l 1		; / record allocated buffer
-recPtr:		ds.l 1		; | current record to write
-recWin:		ds.l 1		; | Instant window start
-recEnd:		ds.l 1		; \ end of record buffer
+recBuf:	ds.l	1		; / record allocated buffer
+recPtr:	ds.l	1		; | current record to write
+recWin:	ds.l	1		; | Instant window start
+recEnd:	ds.l	1		; \ end of record buffer
 	even
-lock:		ds.w 1
-_vbl:		ds.l 1
-_mfp:		ds.l 1
+lock:	ds.w	1
+_vbl:	ds.l	1
+_mfp:	ds.l	1
 	even
-q10:		ds.l 2*16
+q10:	ds.l	2*16
 	even
-ecode:		ds.w 1
-lastvbl:	ds.l 1
-phybase:	ds.l 1
-fhdl:		ds.w 1
-numvec:		ds.w 1
-paused:		ds.b 1
-savea07:	ds.b 1
-savea09:	ds.b 1
-savea17:	ds.b 1
+ecode:	ds.w	1
+lastvbl:	ds.l	1
+phybase:	ds.l	1
+fhdl:	ds.w	1
+numvec:	ds.w	1
+paused:	ds.b	1
+savea07:	ds.b	1
+savea09:	ds.b	1
+savea17:	ds.b	1
+savepal:	ds.l	2
 	even
-savessp:	ds.l 1
-saveusp:	ds.l 1
-vectors:	ds.l NIRQ
+savessp:	ds.l	1
+saveusp:	ds.l	1
+vectors:	ds.l	NIRQ
 	even
-		ds.l 128
-ustack:		ds.l 1
+	ds.l	128
+ustack:	ds.l	1
+
+;;; Local Variables:
+;;; mode: asm
+;;; indent-tabs-mode: t
+;;; tab-width: 10
+;;; comment-column: 40
+;;; End:
